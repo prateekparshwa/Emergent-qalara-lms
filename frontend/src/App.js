@@ -8,6 +8,7 @@ import AuthCallback from "@/pages/AuthCallback";
 import ComingSoon from "@/pages/ComingSoon";
 import Dashboard from "@/pages/Dashboard";
 import Discover from "@/pages/Discover";
+import Settings from "@/pages/Settings";
 import { Toaster } from "@/components/ui/sonner";
 
 function Router() {
@@ -48,16 +49,7 @@ function Router() {
             />
           }
         />
-        <Route
-          path="/settings"
-          element={
-            <ComingSoon
-              kicker="Configuration"
-              title="Settings"
-              description="Manage the Qalara profile, categories, MOQs and value props used across the platform."
-            />
-          }
-        />
+        <Route path="/settings" element={<Settings />} />
       </Route>
     </Routes>
   );

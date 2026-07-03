@@ -639,6 +639,22 @@ async def discover(payload: DiscoverPayload, user: User = Depends(require_editor
     return doc
 
 
+class ProfilePayload(BaseModel):
+    about: str = ""
+    categories: List[str] = []
+    producer_base: str = ""
+    moqs: str = ""
+    export_markets: List[str] = []
+    certifications: List[str] = []
+    value_props: List[str] = []
+
+
+@api_router.put("/settings/qalara_profile")
+async def put_profile(p: ProfilePayload, user: User = Depends(require_editor)):
+    await db.settings.update_one({"key": "qalara_profile"}, {"$set": {"value": p.model_dump()}}, upsert=True)
+    return p.model_dump()
+
+
 @api_router.get("/settings/qalara_profile")
 async def get_qalara_profile(user: User = Depends(get_current_user)):
     doc = await db.settings.find_one({"key": "qalara_profile"}, {"_id": 0})
