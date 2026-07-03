@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 3 first-finish testing of Qalara LMS buyer directory (backend + frontend). Seeded editor and viewer sessions in Mongo. Verified all buyers/* endpoints, import preview+commit with dedup preservation, HIGH-vs-'higher' rationale edge case, purchase_potential + sources_from_india normalization, PATCH & notes permission gating, and core UI flows (dashboard load, stats band, badges, search suggestions, filter dot glow, dossier open, role-based UI). One backend ordering issue found: AM notes are returned/stored in insertion order, not newest-first as spec requires. Frontend viewer dossier `dossier-am-readonly` testid was not visible when row was clicked.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "GET /api/buyers unauth → 401; editor Bearer token → 200 with {items,total,page,page_size} paginated shape",
+    "GET /api/buyers/stats returns {total,high,medium,with_enrichment,assigned}; 'higher potential' rationale on a LOW row did NOT increment high; lowercase 'high' value DID increment high (case-insensitive start-of-field match verified)",
+    "GET /api/buyers/suggest?q=Nord returns matching buyers; empty q → []",
+    "GET /api/buyers/account-managers returns distinct sorted non-empty list (Ananya Sen, Rhea Kapoor, Vikram Shah)",
+    "GET /api/buyers/filter-facets returns sorted distinct countries + business_types",
+    "Filters: ?purchase_potential=HIGH (4), ?country=Sweden (1), ?unassigned=true works; ?page=2&page_size=2 pagination correct",
+    "POST /api/buyers/import/preview: viewer→403, unauth→401, editor→{columns, sample_rows, total_rows, allowed_fields}",
+    "POST /api/buyers/import/commit: missing organization mapping → 400; valid mapping inserts new rows (3 inserted); dedup on website (protocol/trailing slash insensitive) → updated=1, inserted=0",
+    "Dedup PRESERVES am_notes, enrichment, outreach_status, account_manager — re-import mapping account_manager to 'Y' kept existing 'X'",
+    "purchase_potential normalization: 'high potential fit'→HIGH, 'medium'→MEDIUM, empty→UNKNOWN",
+    "sources_from_india parsing: 'yes'/'true'→true; 'no'→false",
+    "GET /api/buyers/{unknown} → 404; PATCH viewer→403, editor→200 updated; POST notes empty→400, viewer→403, editor→200",
+    "Frontend: /dashboard renders data-testid=dashboard-page, all 5 stat-<key> tiles, import-buyers-btn (editor)",
+    "Frontend: buyer-table shows rows with buyer-row-<id>; HIGH badge teal, MEDIUM amber, LOW gray/zinc",
+    "Frontend: search 'Nord' shows buyer-search-suggestions; clicking suggest-<id> opens buyer-dossier",
+    "Frontend: potential filter dot has bg-teal-500 with glow shadow when HIGH selected; filter-clear appears; filtered row count reduces (10→5)",
+    "Frontend: row click opens buyer-dossier; editor sees dossier-am-trigger and dossier-note-textarea",
+    "Frontend viewer role: import-buyers-btn-disabled visible; dossier-note-textarea absent"
+  ],
+  "failed": [
+    {
+      "area": "backend/notes ordering",
+      "issue": "AM notes are stored/returned in insertion (chronological) order, not newest-first as spec requires. After adding a new note (timestamp 2026-07-03) to a buyer with an existing 2024 note, the returned am_notes array has the 2024 note at index 0 and the 2026 note at index 1.",
+      "evidence": "GET /api/buyers/buyer_b565d312425e am_notes[0].timestamp='2024-01-01T00:00:00Z', am_notes[1].timestamp='2026-07-03T19:39:02Z'. Spec: 'storing author_email + timestamp, newest first'.",
+      "priority": "MEDIUM"
+    },
+    {
+      "area": "frontend/viewer dossier",
+      "issue": "For viewer role, `data-testid=\"dossier-am-readonly\"` was not visible after clicking a row. Either the row click did not open the dossier under viewer role or the readonly AM section testid is missing/misnamed.",
+      "evidence": "Playwright: '[VIEWER] dossier-am-readonly visible: False' after clicking first buyer row while logged in as viewer.",
+      "priority": "MEDIUM"
+    },
+    {
+      "area": "frontend/accessibility (non-blocking)",
+      "issue": "Radix DialogContent warnings: missing DialogTitle and aria-describedby on Import Buyers dialog and/or buyer dossier drawer.",
+      "evidence": "Console: `DialogContent` requires a `DialogTitle` for the component to be accessible for screen reader users.",
+      "priority": "LOW"
+    }
+  ],
+  "action_items": [
+    "Sort am_notes newest-first on POST /api/buyers/{id}/notes response and on GET /api/buyers/{id} (or when returning to frontend). Ensure new notes are prepended (or sort by timestamp desc).",
+    "Verify viewer can open buyer dossier via row click; ensure the AM section renders with data-testid=\"dossier-am-readonly\" for viewer role.",
+    "(Low) Add DialogTitle/Description or VisuallyHidden wrapper to the ImportBuyersDialog and BuyerDossier Radix Dialog for a11y."
+  ],
+  "success_rate": {"backend": "~97% (1 ordering issue)", "frontend": "~90% (viewer dossier readonly testid missing)"},
+  "retest_needed": true,
+  "full_testing_deferred": true
+}

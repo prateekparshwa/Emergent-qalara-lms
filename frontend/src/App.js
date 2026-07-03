@@ -6,6 +6,7 @@ import SignIn from "@/pages/SignIn";
 import SignedOut from "@/pages/SignedOut";
 import AuthCallback from "@/pages/AuthCallback";
 import ComingSoon from "@/pages/ComingSoon";
+import Dashboard from "@/pages/Dashboard";
 import { Toaster } from "@/components/ui/sonner";
 
 function Router() {
@@ -20,26 +21,8 @@ function Router() {
       <Route path="/sign-in" element={<SignIn />} />
       <Route path="/signed-out" element={<SignedOut />} />
       <Route element={<AppShell />}>
-        <Route
-          path="/"
-          element={
-            <ComingSoon
-              kicker="Overview"
-              title="Dashboard"
-              description="Your daily pulse on the pipeline — active leads, outreach velocity, and impact on artisan producers."
-            />
-          }
-        />
-        <Route
-          path="/dashboard"
-          element={
-            <ComingSoon
-              kicker="Overview"
-              title="Dashboard"
-              description="Your daily pulse on the pipeline — active leads, outreach velocity, and impact on artisan producers."
-            />
-          }
-        />
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/dashboard" element={<Dashboard />} />
         <Route
           path="/discover"
           element={

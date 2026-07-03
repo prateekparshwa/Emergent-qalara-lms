@@ -3,19 +3,23 @@
 Foundation: Emergent Google Auth (session-based), users/sessions/buyers/settings
 collections, seed data on startup, and read-only endpoints for the app shell.
 """
-from fastapi import FastAPI, APIRouter, Request, Response, HTTPException, Depends
+from fastapi import FastAPI, APIRouter, Request, Response, HTTPException, Depends, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import re
+import io
+import json
 import uuid
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from datetime import datetime, timezone, timedelta
 import httpx
+import pandas as pd
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -214,11 +218,356 @@ async def logout(request: Request, response: Response):
     return {"ok": True}
 
 
-# ---------- Buyers endpoints (read-only foundation) ----------
+# ---------- Buyers endpoints ----------
+BUYER_FIELDS_ALLOWED = [
+    "organization", "website", "email", "contact_name", "designation", "country",
+    "business_type", "org_size", "purchase_potential", "potential_rationale",
+    "account_manager", "sources_from_india",
+]
+PROTECTED_ON_UPDATE = {
+    "am_notes", "enrichment", "enrichment_updated_at", "moodboard",
+    "outreach_status", "outreach_emails", "lead_score", "account_manager",
+    "id", "created_at",
+}
+
+
+async def require_editor(user: User = Depends(get_current_user)) -> User:
+    if user.role != "editor":
+        raise HTTPException(status_code=403, detail="Editors only")
+    return user
+
+
+def _parse_bool(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return False
+    return str(v).strip().lower() in {"true", "yes", "y", "1", "t"}
+
+
+def _normalize_potential(v) -> str:
+    if v is None:
+        return "UNKNOWN"
+    s = str(v).strip().upper()
+    for k in ("HIGH", "MEDIUM", "LOW", "UNKNOWN"):
+        if s.startswith(k):
+            return k
+    return "UNKNOWN"
+
+
+def _norm_website(w) -> Optional[str]:
+    if not w:
+        return None
+    s = str(w).strip().lower()
+    s = re.sub(r"^https?://", "", s)
+    s = s.rstrip("/")
+    return s or None
+
+
+def _read_upload(content: bytes, filename: str) -> pd.DataFrame:
+    name = (filename or "").lower()
+    if name.endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(content), dtype=str, keep_default_na=False)
+    elif name.endswith(".xlsx") or name.endswith(".xls"):
+        df = pd.read_excel(io.BytesIO(content), dtype=str)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file type; use .csv or .xlsx")
+    df = df.fillna("")
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+@api_router.post("/buyers/import/preview")
+async def import_preview(file: UploadFile = File(...), user: User = Depends(require_editor)):
+    content = await file.read()
+    df = _read_upload(content, file.filename or "")
+    return {
+        "columns": list(df.columns),
+        "sample_rows": df.head(3).astype(str).to_dict(orient="records"),
+        "total_rows": int(len(df)),
+        "allowed_fields": BUYER_FIELDS_ALLOWED,
+    }
+
+
+@api_router.post("/buyers/import/commit")
+async def import_commit(
+    file: UploadFile = File(...),
+    mapping: str = Form(...),
+    user: User = Depends(require_editor),
+):
+    try:
+        mp: Dict[str, str] = json.loads(mapping)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid mapping JSON")
+
+    # csv_col -> buyer_field, filtered to allowed fields only
+    rev: Dict[str, str] = {}
+    for col, field in mp.items():
+        if field and field in BUYER_FIELDS_ALLOWED:
+            rev[field] = col
+
+    if not rev.get("organization"):
+        raise HTTPException(status_code=400, detail="'organization' column must be mapped")
+
+    content = await file.read()
+    df = _read_upload(content, file.filename or "")
+
+    # Cache all existing buyers for dedup
+    existing_all = await db.buyers.find({}, {"_id": 0}).to_list(100000)
+    by_website: Dict[str, dict] = {}
+    by_org_email: Dict[tuple, dict] = {}
+    for b in existing_all:
+        w = _norm_website(b.get("website"))
+        if w:
+            by_website[w] = b
+        org = str(b.get("organization", "")).strip().lower()
+        email = str(b.get("email", "")).strip().lower()
+        if org and email:
+            by_org_email[(org, email)] = b
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    inserted = updated = skipped = 0
+
+    for _, row in df.iterrows():
+        record: Dict[str, Any] = {}
+        for field, col in rev.items():
+            val = row.get(col, "")
+            if field == "sources_from_india":
+                record[field] = _parse_bool(val)
+            elif field == "purchase_potential":
+                record[field] = _normalize_potential(val)
+            else:
+                record[field] = str(val).strip() if val is not None else ""
+
+        org = str(record.get("organization", "")).strip()
+        if not org:
+            skipped += 1
+            continue
+
+        website_norm = _norm_website(record.get("website"))
+        email_lc = str(record.get("email", "")).strip().lower()
+
+        existing = None
+        if website_norm and website_norm in by_website:
+            existing = by_website[website_norm]
+        elif org.lower() and email_lc and (org.lower(), email_lc) in by_org_email:
+            existing = by_org_email[(org.lower(), email_lc)]
+
+        if existing:
+            # preserve protected fields; only set mapped ones (except protected)
+            update_fields = {k: v for k, v in record.items() if k not in PROTECTED_ON_UPDATE}
+            update_fields["updated_at"] = now_iso
+            update_fields["segment"] = existing.get("segment", "directory")
+            await db.buyers.update_one({"id": existing["id"]}, {"$set": update_fields})
+            updated += 1
+        else:
+            doc = {
+                "id": f"buyer_{uuid.uuid4().hex[:12]}",
+                "organization": org,
+                "website": record.get("website", ""),
+                "email": record.get("email", ""),
+                "contact_name": record.get("contact_name", ""),
+                "designation": record.get("designation", ""),
+                "country": record.get("country", ""),
+                "business_type": record.get("business_type", ""),
+                "org_size": record.get("org_size", ""),
+                "purchase_potential": record.get("purchase_potential", "UNKNOWN"),
+                "potential_rationale": record.get("potential_rationale", ""),
+                "account_manager": record.get("account_manager", ""),
+                "am_notes": [],
+                "sources_from_india": record.get("sources_from_india", False),
+                "segment": "directory",
+                "enrichment": None,
+                "enrichment_updated_at": None,
+                "moodboard": None,
+                "outreach_status": "NONE",
+                "outreach_emails": [],
+                "lead_score": None,
+                "created_at": now_iso,
+                "updated_at": now_iso,
+            }
+            await db.buyers.insert_one(doc)
+            # update caches so a duplicate later in the same file matches this new row
+            if website_norm:
+                by_website[website_norm] = doc
+            if email_lc:
+                by_org_email[(org.lower(), email_lc)] = doc
+            inserted += 1
+
+    return {"inserted": inserted, "updated": updated, "skipped": skipped}
+
+
+@api_router.get("/buyers/stats")
+async def buyer_stats(user: User = Depends(get_current_user)):
+    total = await db.buyers.count_documents({})
+    high = await db.buyers.count_documents(
+        {"purchase_potential": {"$regex": "^HIGH", "$options": "i"}}
+    )
+    medium = await db.buyers.count_documents(
+        {"purchase_potential": {"$regex": "^MEDIUM", "$options": "i"}}
+    )
+    with_enrichment = await db.buyers.count_documents(
+        {"enrichment": {"$nin": [None]}, "enrichment_updated_at": {"$nin": [None, ""]}}
+    )
+    assigned = await db.buyers.count_documents(
+        {"account_manager": {"$nin": ["", None]}}
+    )
+    return {
+        "total": total,
+        "high": high,
+        "medium": medium,
+        "with_enrichment": with_enrichment,
+        "assigned": assigned,
+    }
+
+
+@api_router.get("/buyers/suggest")
+async def buyer_suggest(q: str = "", user: User = Depends(get_current_user)):
+    q = q.strip()
+    if not q:
+        return []
+    esc = re.escape(q)
+    query = {
+        "$or": [
+            {"organization": {"$regex": f"^{esc}", "$options": "i"}},
+            {"email": {"$regex": esc, "$options": "i"}},
+            {"website": {"$regex": esc, "$options": "i"}},
+        ]
+    }
+    items = await db.buyers.find(
+        query,
+        {"_id": 0, "id": 1, "organization": 1, "country": 1, "email": 1, "website": 1},
+    ).limit(8).to_list(8)
+    return items
+
+
+@api_router.get("/buyers/account-managers")
+async def list_account_managers(user: User = Depends(get_current_user)):
+    ams = await db.buyers.distinct("account_manager")
+    return sorted([a for a in ams if a])
+
+
+@api_router.get("/buyers/filter-facets")
+async def filter_facets(user: User = Depends(get_current_user)):
+    countries = await db.buyers.distinct("country")
+    business_types = await db.buyers.distinct("business_type")
+    return {
+        "countries": sorted([c for c in countries if c]),
+        "business_types": sorted([b for b in business_types if b]),
+    }
+
+
 @api_router.get("/buyers")
-async def list_buyers(user: User = Depends(get_current_user)):
-    docs = await db.buyers.find({}, {"_id": 0}).to_list(1000)
-    return docs
+async def list_buyers(
+    q: str = "",
+    country: str = "",
+    business_type: str = "",
+    purchase_potential: str = "",
+    account_manager: str = "",
+    sources_from_india: Optional[str] = None,
+    unassigned: bool = False,
+    page: int = 1,
+    page_size: int = 50,
+    user: User = Depends(get_current_user),
+):
+    query: Dict[str, Any] = {}
+    ands: List[Dict[str, Any]] = []
+
+    if country:
+        query["country"] = country
+    if business_type:
+        query["business_type"] = business_type
+    if purchase_potential:
+        query["purchase_potential"] = {
+            "$regex": f"^{re.escape(purchase_potential)}",
+            "$options": "i",
+        }
+    if account_manager:
+        query["account_manager"] = account_manager
+    if sources_from_india in ("true", "false"):
+        query["sources_from_india"] = sources_from_india == "true"
+    if unassigned:
+        ands.append({
+            "$or": [
+                {"account_manager": ""},
+                {"account_manager": None},
+                {"account_manager": {"$exists": False}},
+            ]
+        })
+    q = q.strip()
+    if q:
+        esc = re.escape(q)
+        ands.append({
+            "$or": [
+                {"organization": {"$regex": f"^{esc}", "$options": "i"}},
+                {"email": {"$regex": esc, "$options": "i"}},
+                {"website": {"$regex": esc, "$options": "i"}},
+            ]
+        })
+    if ands:
+        query["$and"] = ands
+
+    page = max(1, int(page))
+    page_size = max(1, min(200, int(page_size)))
+    total = await db.buyers.count_documents(query)
+    skip = (page - 1) * page_size
+    items = await (
+        db.buyers.find(query, {"_id": 0})
+        .sort("created_at", -1)
+        .skip(skip)
+        .limit(page_size)
+        .to_list(page_size)
+    )
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@api_router.get("/buyers/{buyer_id}")
+async def get_buyer(buyer_id: str, user: User = Depends(get_current_user)):
+    doc = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Buyer not found")
+    return doc
+
+
+class BuyerPatch(BaseModel):
+    account_manager: Optional[str] = None
+
+
+@api_router.patch("/buyers/{buyer_id}")
+async def patch_buyer(buyer_id: str, payload: BuyerPatch, user: User = Depends(require_editor)):
+    update: Dict[str, Any] = {}
+    if payload.account_manager is not None:
+        update["account_manager"] = payload.account_manager
+    if not update:
+        raise HTTPException(status_code=400, detail="No editable fields provided")
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    result = await db.buyers.update_one({"id": buyer_id}, {"$set": update})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Buyer not found")
+    return await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+
+
+class NotePayload(BaseModel):
+    text: str
+
+
+@api_router.post("/buyers/{buyer_id}/notes")
+async def add_buyer_note(buyer_id: str, payload: NotePayload, user: User = Depends(require_editor)):
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Note text required")
+    note = {
+        "text": text,
+        "author_email": user.email,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    result = await db.buyers.update_one(
+        {"id": buyer_id},
+        {"$push": {"am_notes": note}, "$set": {"updated_at": note["timestamp"]}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Buyer not found")
+    return await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
 
 
 @api_router.get("/settings/qalara_profile")
