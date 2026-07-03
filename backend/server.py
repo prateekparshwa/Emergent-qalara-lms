@@ -804,6 +804,126 @@ async def enrich_buyer(buyer_id: str, force: bool = False, user: User = Depends(
     return doc
 
 
+# ---------- Moodboard ----------
+async def _scrape_image_urls(url: str, limit: int = 12) -> List[str]:
+    if not url:
+        return []
+    u = url.strip()
+    if not u.startswith(("http://", "https://")):
+        u = "https://" + u
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0,
+                                     headers={"User-Agent": "Mozilla/5.0 QalaraLMS/0.3"}) as h:
+            r = await h.get(u)
+            r.raise_for_status()
+            base = str(r.url)
+            soup = BeautifulSoup(r.text, "html.parser")
+    except Exception as e:
+        logger.info("moodboard scrape failed for %s: %s", u, e)
+        return []
+
+    from urllib.parse import urljoin
+    imgs, seen = [], set()
+    for tag in soup.find_all(["img", "source"]):
+        src = tag.get("src") or tag.get("data-src") or tag.get("srcset") or ""
+        if "," in src:
+            src = src.split(",")[0].strip().split(" ")[0]
+        if not src:
+            continue
+        low = src.lower().strip()
+        if low.startswith("data:") or low.endswith(".svg") or ".svg?" in low:
+            continue
+        try:
+            w = int(tag.get("width") or 0); hh = int(tag.get("height") or 0)
+            if (w and w < 100) or (hh and hh < 100):
+                continue
+        except (ValueError, TypeError):
+            pass
+        if re.search(r"(favicon|sprite|icon|logo)", low):
+            continue
+        absolute = urljoin(base, src)
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        imgs.append(absolute)
+        if len(imgs) >= limit:
+            break
+    return imgs
+
+
+MOODBOARD_SYSTEM = "You are a brand-identity analyst. Given a company's homepage text, extract their visual identity in strict JSON."
+MOODBOARD_INSTRUCTION = """Extract this brand's visual identity. Return ONLY a JSON object:
+{
+  "tagline": "their tagline or a 6-word summary of their vibe",
+  "color_palette": ["#RRGGBB", ...5 hex colors],
+  "brand_voice": ["2-3 adjectives"],
+  "typography_feel": "one phrase, e.g. 'clean geometric sans'",
+  "aesthetic_keywords": ["5 keywords"]
+}
+"""
+
+
+@api_router.post("/buyers/{buyer_id}/moodboard")
+async def generate_moodboard(buyer_id: str, force: bool = False, user: User = Depends(require_editor)):
+    buyer = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    if not buyer:
+        raise HTTPException(status_code=404, detail="Buyer not found")
+
+    existing = buyer.get("moodboard") or {}
+    if not force and existing.get("generated_at"):
+        try:
+            last = datetime.fromisoformat(existing["generated_at"])
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - last < timedelta(days=7):
+                return {"needs_confirm": True, "last_generated": existing["generated_at"]}
+        except Exception:
+            pass
+
+    website = buyer.get("website", "")
+    images = await _scrape_image_urls(website)
+    site_text = await _fetch_site_text(website)
+
+    prompt = (
+        f"Company: {buyer.get('organization','')}\nCountry: {buyer.get('country','')}\n\n"
+        f"--- Site text ---\n{site_text or '[unavailable]'}\n\n" + MOODBOARD_INSTRUCTION
+    )
+
+    visual, llm_error = None, None
+    try:
+        chat = LlmChat(
+            api_key=os.environ.get("EMERGENT_LLM_KEY", ""),
+            session_id=f"moodboard-{buyer_id}-{uuid.uuid4().hex[:6]}",
+            system_message=MOODBOARD_SYSTEM,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        raw = await chat.send_message(UserMessage(text=prompt))
+        visual = _extract_json(str(raw))
+    except Exception as e:
+        logger.warning("moodboard LLM failed for %s: %s", buyer_id, e)
+        llm_error = str(e)
+
+    if visual:
+        for k in ("color_palette", "brand_voice", "aesthetic_keywords"):
+            if not isinstance(visual.get(k), list):
+                visual[k] = []
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    moodboard = {
+        "images": images,
+        "tagline": (visual or {}).get("tagline", ""),
+        "color_palette": (visual or {}).get("color_palette", []),
+        "brand_voice": (visual or {}).get("brand_voice", []),
+        "typography_feel": (visual or {}).get("typography_feel", ""),
+        "aesthetic_keywords": (visual or {}).get("aesthetic_keywords", []),
+        "generated_at": now_iso,
+        "error": llm_error,
+    }
+    await db.buyers.update_one({"id": buyer_id}, {"$set": {"moodboard": moodboard, "updated_at": now_iso}})
+    doc = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    doc["am_notes"] = sorted(doc.get("am_notes") or [], key=lambda n: n.get("timestamp") or "", reverse=True)
+    return doc
+
+
 # ---------- Seeding ----------
 async def _seed():
     now_iso = datetime.now(timezone.utc).isoformat()

@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { Globe, Mail, User, Briefcase, MapPin, Building2, Layers, Flame } from "lucide-react";
 import EnrichmentSection from "@/components/dashboard/EnrichmentSection";
+import MoodboardSection from "@/components/dashboard/MoodboardSection";
 
 const POT_STYLES = {
   HIGH: "bg-teal-50 text-teal-800 border-teal-200",
@@ -234,6 +235,14 @@ export default function BuyerDossier({ buyerId, onClose, onBuyerChanged }) {
 
               <section>
                 <EnrichmentSection
+                  buyer={buyer}
+                  isEditor={isEditor}
+                  onBuyerChanged={(updated) => { setBuyer(updated); onBuyerChanged?.(); }}
+                />
+              </section>
+
+              <section>
+                <MoodboardSection
                   buyer={buyer}
                   isEditor={isEditor}
                   onBuyerChanged={(updated) => { setBuyer(updated); onBuyerChanged?.(); }}
