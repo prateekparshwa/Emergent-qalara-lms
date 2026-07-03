@@ -1,0 +1,39 @@
+{
+  "summary": "Backend (auth, buyers, settings, seed idempotency, session expiry, logout) all passing. Frontend sign-in, unauth redirect, editor/viewer role behaviour, nav routing, disabled/enabled primary actions, and role-badge all passing. One bug: sign-out lands on /sign-in instead of /signed-out.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "GET /api/auth/me unauth -> 401",
+    "GET /api/buyers unauth -> 401",
+    "POST /api/auth/session with invalid session_id -> 401",
+    "Startup seed: 5 buyers with correct schema (purchase_potential HIGH/MEDIUM/LOW, segment directory/discover, outreach_status NONE default, all required keys)",
+    "Startup seed: settings 'qalara_profile' has about/categories/producer_base/moqs/export_markets/certifications/value_props",
+    "Seed idempotency: after backend restart, buyers count stays 5 and settings count stays 1",
+    "Editor Bearer token: /api/auth/me returns role='editor' for @qalara.com email",
+    "Viewer Bearer token: /api/auth/me returns role='viewer' for gmail.com email",
+    "Editor Bearer: GET /api/buyers returns 5 buyers list",
+    "Editor Bearer: GET /api/settings/qalara_profile returns object with expected keys",
+    "Expired session (expires_at in past) -> 401 on /api/auth/me",
+    "POST /api/auth/logout deletes session; subsequent /api/auth/me -> 401",
+    "SignIn page renders with data-testid signin-page, brand-logo, google-signin-btn",
+    "google-signin-btn navigates to https://auth.emergentagent.com/?redirect=...",
+    "Unauthenticated /dashboard redirects to /sign-in",
+    "Editor session cookie renders AppShell with sidebar navs (nav-dashboard/discover/outreach/impact/settings), topbar, role-badge='editor', user-name visible",
+    "Each nav click routes to correct Coming Soon page (coming-soon-dashboard/discover/outreach/impact/settings)",
+    "Editor: primary-action button enabled; disabled-primary-action not present",
+    "Viewer session: role-badge='viewer', 'Demo mode' pill visible, disabled-primary-action present, primary-action absent"
+  ],
+  "failed": [
+    {
+      "area": "Frontend / sign-out flow",
+      "issue": "Clicking sign-out lands on /sign-in instead of /signed-out. After logout() clears user, AppShell (protected wrapper) renders <Navigate to='/sign-in' replace /> which pre-empts the navigate('/signed-out') call in TopBar.handleSignOut. The /signed-out page and its return-signin-link data-testid are correctly implemented but unreachable via the UI.",
+      "evidence": "Playwright: after clicking user-menu-trigger -> sign-out-btn, page.url resolves to https://<host>/sign-in; data-testid='signed-out-page' never appears (timeout 10s). Reproduced twice.",
+      "priority": "HIGH"
+    }
+  ],
+  "action_items": [
+    "In TopBar.handleSignOut, navigate to '/signed-out' BEFORE calling logout(); OR mark /signed-out as a public route accessible even when user is null (already is a top-level route) and change AppShell to redirect to '/signed-out' when user becomes null due to explicit logout (e.g., set a 'justLoggedOut' flag in AuthContext, or navigate first then clear user). Simplest fix: in AuthContext.logout, after API call, call navigate('/signed-out') before setUser(null), or setUser(null) then use a useEffect in AppShell that checks a logout flag."
+  ],
+  "success_rate": {"backend": "100%", "frontend": "~93% (1/15 flows failing: sign-out redirect target)"},
+  "retest_needed": true,
+  "full_testing_deferred": true
+}
