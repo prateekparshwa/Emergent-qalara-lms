@@ -994,6 +994,218 @@ async def generate_moodboard(buyer_id: str, force: bool = False, user: User = De
     return doc
 
 
+# ---------- Outreach ----------
+OUTREACH_SYSTEM = (
+    "You are a B2B outreach copywriter for Qalara, an Indian export marketplace "
+    "connecting global wholesale buyers with curated Indian artisan producers of "
+    "home décor, textiles, kitchenware and lifestyle goods. You write short, "
+    "warm, specific emails — never generic filler."
+)
+
+OUTREACH_INSTRUCTION = """Write a short, warm, specific B2B outreach email (max 140 words) from Qalara to this buyer.
+
+Requirements:
+- Reference something CONCRETE about THEIR brand (products, aesthetic, markets, or brand voice).
+- Connect that to a SPECIFIC matching Qalara capability (a category, producer cluster, MOQ, certification, or value prop).
+- No generic filler like "I hope this finds you well" or "I hope you're doing great".
+- End with a low-friction ask: either a curated catalog tailored to their aesthetic, or a 15-minute call.
+- If a contact name is available, address them by first name; otherwise open naturally.
+- Signed off from "The Qalara Team".
+
+Return ONLY a JSON object (no prose, no code fences) with this exact schema:
+{
+  "subject": "short subject line, max 60 chars, specific — not generic",
+  "body": "the email body, newlines allowed, max 140 words"
+}
+"""
+
+
+class OutreachStatusPayload(BaseModel):
+    status: str
+
+
+ALLOWED_OUTREACH_STATUSES = {"NONE", "DRAFTED", "SENT", "REPLIED", "QUOTED"}
+
+
+def _build_outreach_prompt(buyer: Dict[str, Any], profile: Dict[str, Any]) -> str:
+    enrichment = buyer.get("enrichment") or {}
+    moodboard = buyer.get("moodboard") or {}
+
+    def _fmt_list(v):
+        if isinstance(v, list):
+            return ", ".join(str(x) for x in v if x)
+        return str(v or "")
+
+    lines = [
+        f"BUYER COMPANY: {buyer.get('organization', '')}",
+        f"COUNTRY: {buyer.get('country', '')}",
+    ]
+    contact_name = (buyer.get("contact_name") or "").strip()
+    designation = (buyer.get("designation") or "").strip()
+    if contact_name:
+        lines.append(f"CONTACT NAME: {contact_name}")
+    if designation:
+        lines.append(f"CONTACT DESIGNATION: {designation}")
+
+    lines.append("\n--- Buyer Enrichment ---")
+    if enrichment.get("summary"):
+        lines.append(f"Summary: {enrichment['summary']}")
+    if enrichment.get("products_sold"):
+        lines.append(f"Products sold: {_fmt_list(enrichment.get('products_sold'))}")
+    if enrichment.get("target_customers"):
+        lines.append(f"Target customers: {enrichment['target_customers']}")
+    if enrichment.get("markets_served"):
+        lines.append(f"Markets served: {_fmt_list(enrichment.get('markets_served'))}")
+    if enrichment.get("estimated_size"):
+        lines.append(f"Estimated size: {enrichment['estimated_size']}")
+    if enrichment.get("brand_style"):
+        lines.append(f"Brand style: {enrichment['brand_style']}")
+    if enrichment.get("fit_categories"):
+        lines.append(f"Qalara fit categories: {_fmt_list(enrichment.get('fit_categories'))}")
+
+    if moodboard and (moodboard.get("tagline") or moodboard.get("aesthetic_keywords")
+                     or moodboard.get("brand_voice") or moodboard.get("typography_feel")):
+        lines.append("\n--- Buyer Moodboard ---")
+        if moodboard.get("tagline"):
+            lines.append(f"Tagline: {moodboard['tagline']}")
+        if moodboard.get("aesthetic_keywords"):
+            lines.append(f"Aesthetic keywords: {_fmt_list(moodboard.get('aesthetic_keywords'))}")
+        if moodboard.get("brand_voice"):
+            lines.append(f"Brand voice: {_fmt_list(moodboard.get('brand_voice'))}")
+        if moodboard.get("typography_feel"):
+            lines.append(f"Typography feel: {moodboard['typography_feel']}")
+
+    lines.append("\n--- Qalara Capability Profile ---")
+    if profile.get("about"):
+        lines.append(f"About: {profile['about']}")
+    if profile.get("categories"):
+        lines.append(f"Categories: {_fmt_list(profile.get('categories'))}")
+    if profile.get("producer_base"):
+        lines.append(f"Producer base: {profile['producer_base']}")
+    if profile.get("moqs"):
+        lines.append(f"MOQs: {profile['moqs']}")
+    if profile.get("export_markets"):
+        lines.append(f"Export markets: {_fmt_list(profile.get('export_markets'))}")
+    if profile.get("certifications"):
+        lines.append(f"Certifications: {_fmt_list(profile.get('certifications'))}")
+    if profile.get("value_props"):
+        lines.append(f"Value props: {_fmt_list(profile.get('value_props'))}")
+
+    lines.append("\n" + OUTREACH_INSTRUCTION)
+    return "\n".join(lines)
+
+
+@api_router.post("/buyers/{buyer_id}/outreach/draft")
+async def draft_outreach(buyer_id: str, user: User = Depends(require_editor)):
+    buyer = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    if not buyer:
+        raise HTTPException(status_code=404, detail="Buyer not found")
+
+    enrichment = buyer.get("enrichment") or {}
+    if not enrichment or enrichment.get("error") or not any(
+        enrichment.get(k) for k in ("summary", "products_sold", "fit_categories", "brand_style")
+    ):
+        raise HTTPException(status_code=400, detail="Enrich this buyer first")
+
+    profile_doc = await db.settings.find_one({"key": "qalara_profile"}, {"_id": 0})
+    profile = (profile_doc or {}).get("value", {}) or {}
+
+    prompt = _build_outreach_prompt(buyer, profile)
+
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    subject, body, llm_error = "", "", None
+    try:
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"outreach-{buyer_id}-{uuid.uuid4().hex[:6]}",
+            system_message=OUTREACH_SYSTEM,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        raw = await chat.send_message(UserMessage(text=prompt))
+        parsed = _extract_json(str(raw))
+        subject = (parsed.get("subject") or "").strip()
+        body = (parsed.get("body") or "").strip()
+        if not subject or not body:
+            raise ValueError("LLM returned empty subject or body")
+    except Exception as e:
+        logger.warning("outreach draft failed for %s: %s", buyer_id, e)
+        llm_error = str(e)
+
+    if llm_error:
+        raise HTTPException(status_code=502, detail=f"Draft generation failed: {llm_error}")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    email_entry = {
+        "subject": subject,
+        "body": body,
+        "drafted_at": now_iso,
+        "sent_at": None,
+        "status": "DRAFTED",
+    }
+
+    await db.buyers.update_one(
+        {"id": buyer_id},
+        {
+            "$push": {"outreach_emails": email_entry},
+            "$set": {"outreach_status": "DRAFTED", "updated_at": now_iso},
+        },
+    )
+    doc = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    doc["am_notes"] = sorted(doc.get("am_notes") or [], key=lambda n: n.get("timestamp") or "", reverse=True)
+    return doc
+
+
+@api_router.post("/buyers/{buyer_id}/outreach/send")
+async def send_outreach(buyer_id: str, user: User = Depends(require_editor)):
+    buyer = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    if not buyer:
+        raise HTTPException(status_code=404, detail="Buyer not found")
+
+    emails = list(buyer.get("outreach_emails") or [])
+    if not emails:
+        raise HTTPException(status_code=400, detail="No outreach draft to send")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    emails[-1] = {
+        **emails[-1],
+        "sent_at": now_iso,
+        "status": "SENT",
+    }
+
+    await db.buyers.update_one(
+        {"id": buyer_id},
+        {"$set": {
+            "outreach_emails": emails,
+            "outreach_status": "SENT",
+            "updated_at": now_iso,
+        }},
+    )
+    doc = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    doc["am_notes"] = sorted(doc.get("am_notes") or [], key=lambda n: n.get("timestamp") or "", reverse=True)
+    return doc
+
+
+@api_router.post("/buyers/{buyer_id}/outreach/status")
+async def set_outreach_status(buyer_id: str, payload: OutreachStatusPayload,
+                              user: User = Depends(require_editor)):
+    status = (payload.status or "").strip().upper()
+    if status not in ALLOWED_OUTREACH_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {payload.status}")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    result = await db.buyers.update_one(
+        {"id": buyer_id},
+        {"$set": {"outreach_status": status, "updated_at": now_iso}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Buyer not found")
+
+    doc = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    doc["am_notes"] = sorted(doc.get("am_notes") or [], key=lambda n: n.get("timestamp") or "", reverse=True)
+    return doc
+
+
+
+
 # ---------- Seeding ----------
 async def _seed():
     now_iso = datetime.now(timezone.utc).isoformat()
