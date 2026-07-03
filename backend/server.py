@@ -20,6 +20,9 @@ from typing import Optional, List, Any, Dict
 from datetime import datetime, timezone, timedelta
 import httpx
 import pandas as pd
+from bs4 import BeautifulSoup
+from urllib.parse import quote_plus
+from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -588,6 +591,171 @@ async def get_qalara_profile(user: User = Depends(get_current_user)):
     if not doc:
         return {}
     return doc.get("value", {})
+
+
+# ---------- AI Enrichment ----------
+QALARA_CATEGORIES = [
+    "Home Décor", "Textiles & Rugs", "Kitchen & Tableware",
+    "Lighting", "Furniture", "Wellness & Lifestyle",
+]
+
+ENRICH_SYSTEM = (
+    "You are a B2B sourcing analyst for Qalara, an Indian export marketplace "
+    "connecting global wholesale buyers with Indian artisan producers of "
+    "home décor, textiles, kitchenware and lifestyle goods."
+)
+
+ENRICH_INSTRUCTION = """Analyze the company below as a potential BUYER of Indian home décor, textiles, kitchenware and lifestyle goods.
+
+Return ONLY a JSON object (no prose, no code fences) with this exact schema:
+{
+  "summary": "2-3 sentence overview",
+  "products_sold": ["..."],
+  "target_customers": "one short sentence",
+  "markets_served": ["..."],
+  "estimated_size": "e.g. 10-50 employees / small boutique / mid-market retailer",
+  "brand_style": "one sentence on their aesthetic",
+  "purchase_potential": "HIGH" or "MEDIUM" or "LOW",
+  "potential_rationale": "2 sentences supporting the rating",
+  "fit_categories": ["subset of: Home Décor, Textiles & Rugs, Kitchen & Tableware, Lighting, Furniture, Wellness & Lifestyle"]
+}
+"""
+
+
+async def _fetch_site_text(url: str) -> str:
+    if not url:
+        return ""
+    u = url.strip()
+    if not u.startswith(("http://", "https://")):
+        u = "https://" + u
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0,
+                                     headers={"User-Agent": "Mozilla/5.0 QalaraLMS/0.3"}) as h:
+            r = await h.get(u)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "html.parser")
+            for tag in soup(["script", "style", "noscript", "svg", "iframe"]):
+                tag.decompose()
+            text = " ".join(soup.get_text(separator=" ").split())
+            return text[:8000]
+    except Exception as e:
+        logger.info("site fetch failed for %s: %s", u, e)
+        return ""
+
+
+async def _web_search_snippets(query: str) -> List[str]:
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0,
+                                     headers={"User-Agent": "Mozilla/5.0"}) as h:
+            r = await h.get("https://duckduckgo.com/html/", params={"q": query})
+            soup = BeautifulSoup(r.text, "html.parser")
+            snippets = []
+            for el in soup.select(".result__snippet, a.result__snippet")[:5]:
+                t = " ".join(el.get_text(" ").split())
+                if t:
+                    snippets.append(t)
+            return snippets
+    except Exception as e:
+        logger.info("web search failed for %s: %s", query, e)
+        return []
+
+
+def _extract_json(s: str) -> dict:
+    s = s.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
+        s = re.sub(r"\n?```$", "", s)
+    start = s.find("{")
+    end = s.rfind("}")
+    if start >= 0 and end > start:
+        s = s[start:end + 1]
+    return json.loads(s)
+
+
+@api_router.post("/buyers/{buyer_id}/enrich")
+async def enrich_buyer(buyer_id: str, force: bool = False, user: User = Depends(require_editor)):
+    buyer = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    if not buyer:
+        raise HTTPException(status_code=404, detail="Buyer not found")
+
+    # 7-day guard
+    if not force and buyer.get("enrichment_updated_at"):
+        try:
+            last = datetime.fromisoformat(buyer["enrichment_updated_at"])
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - last < timedelta(days=7):
+                return {"needs_confirm": True, "last_enriched": buyer["enrichment_updated_at"]}
+        except Exception:
+            pass
+
+    site_text = await _fetch_site_text(buyer.get("website", ""))
+    query = f"{buyer.get('organization', '')} {buyer.get('country', '')} wholesale retail".strip()
+    snippets = await _web_search_snippets(query)
+
+    prompt = (
+        f"Company: {buyer.get('organization', '')}\n"
+        f"Country: {buyer.get('country', '')}\n"
+        f"Website: {buyer.get('website', '')}\n"
+        f"Existing business_type: {buyer.get('business_type', '')}\n\n"
+        f"--- Site homepage text (may be empty) ---\n{site_text or '[unavailable]'}\n\n"
+        f"--- Web search snippets ---\n" + ("\n".join(f"- {s}" for s in snippets) or "[none]") + "\n\n"
+        + ENRICH_INSTRUCTION
+    )
+
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    llm_error = None
+    enrichment_json: Optional[dict] = None
+    try:
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"enrich-{buyer_id}-{uuid.uuid4().hex[:6]}",
+            system_message=ENRICH_SYSTEM,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        raw = await chat.send_message(UserMessage(text=prompt))
+        enrichment_json = _extract_json(str(raw))
+    except Exception as e:
+        logger.warning("LLM enrichment failed for %s: %s", buyer_id, e)
+        llm_error = str(e)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    update: Dict[str, Any] = {"updated_at": now_iso}
+
+    if enrichment_json:
+        # normalize potential
+        pp = _normalize_potential(enrichment_json.get("purchase_potential"))
+        enrichment_json["purchase_potential"] = pp
+        # coerce arrays
+        for k in ("products_sold", "markets_served", "fit_categories"):
+            if not isinstance(enrichment_json.get(k), list):
+                enrichment_json[k] = []
+        update["enrichment"] = enrichment_json
+        update["enrichment_updated_at"] = now_iso
+        # fill purchase_potential only if previously unknown/empty
+        prev_pp = (buyer.get("purchase_potential") or "").upper()
+        if prev_pp in ("", "UNKNOWN") and pp in ("HIGH", "MEDIUM", "LOW"):
+            update["purchase_potential"] = pp
+            if not (buyer.get("potential_rationale") or "").strip():
+                update["potential_rationale"] = enrichment_json.get("potential_rationale") or ""
+    else:
+        # partial result: still record the attempt with error
+        update["enrichment"] = {
+            "error": llm_error or "Analysis unavailable",
+            "site_text_len": len(site_text),
+            "snippets_count": len(snippets),
+        }
+        update["enrichment_updated_at"] = now_iso
+
+    await db.buyers.update_one({"id": buyer_id}, {"$set": update})
+    doc = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    doc["am_notes"] = sorted(doc.get("am_notes") or [], key=lambda n: n.get("timestamp") or "", reverse=True)
+    doc["_debug"] = {
+        "site_text_chars": len(site_text),
+        "snippets": len(snippets),
+        "llm_ok": enrichment_json is not None,
+        "llm_error": llm_error,
+    }
+    return doc
 
 
 # ---------- Seeding ----------

@@ -1,0 +1,26 @@
+{
+  "summary": "AI Enrichment feature tested end-to-end. All 8 requested scenarios verified. Backend enrich endpoint works for editor with dead URL (returns 200 with LLM summary from snippets alone, _debug.site_text_chars=0, snippets=5, llm_ok=true). 7-day guard returns needs_confirm within 300ms without LLM call; ?force=true bypasses guard. Field-fill rule verified: Buyer A (UNKNOWN + empty) had top-level purchase_potential/potential_rationale filled from LLM (LOW + rationale); Buyer B (MEDIUM + existing rationale) kept top-level fields UNCHANGED while enrichment.* JSON updated. Auth boundaries correct (401 unauth, 403 viewer). Frontend: editor sees enrich-btn ('Re-enrich' for already-enriched), reenrich-confirm dialog opens on click, cancel closes it, enrichment sections render (summary, potential badge=LOW, freshness='Enriched today'). Viewer role: enrich-btn NOT rendered (count=0), but enrichment content still visible.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "POST /api/buyers/{id}/enrich as editor returns 200 with enrichment.summary/products_sold/purchase_potential populated and enrichment_updated_at set",
+    "Unauthenticated enrich -> 401",
+    "Viewer enrich -> 403 (Editors only)",
+    "Dead-URL buyer enriches successfully: _debug.site_text_chars=0, snippets=5, llm_ok=true, summary length=274 chars",
+    "7-day guard: 2nd immediate enrich returns {needs_confirm:true,last_enriched:<iso>} in 302ms (no LLM call)",
+    "?force=true bypasses guard and re-runs LLM (enrichment_updated_at refreshed)",
+    "Field-fill: Buyer A (UNKNOWN+empty) -> top-level purchase_potential=LOW and potential_rationale populated from LLM",
+    "Field-fill: Buyer B (MEDIUM + 'existing rationale text') -> top-level fields UNCHANGED, only enrichment.* updated (enrichment.purchase_potential=LOW but top stays MEDIUM)",
+    "Frontend editor: enrich-btn visible on already-enriched buyer as 'Re-enrich'",
+    "Frontend editor: reenrich-confirm dialog opens; reenrich-cancel closes it",
+    "Frontend: enrichment-potential, enrichment-freshness ('Enriched today') and dossier-enrichment section rendered",
+    "Frontend viewer role: enrich-btn count=0 (hidden), enrichment sections still render (enrichment-potential visible)"
+  ],
+  "failed": [],
+  "action_items": [
+    "Optional/non-blocking: enrichment-fit-categories element is only rendered when LLM returns >=1 category; both test buyers came back with empty fit_categories from LLM so element was absent. Not a bug, but consider rendering an empty-state chip container for consistency.",
+    "Non-blocking: Console warnings about missing DialogTitle/aria-describedby on DialogContent (a11y warning from Radix UI). Consider adding VisuallyHidden DialogTitle."
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}

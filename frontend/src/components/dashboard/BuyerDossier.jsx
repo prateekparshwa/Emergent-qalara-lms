@@ -6,7 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { Globe, Mail, User, Briefcase, MapPin, Building2, Layers, Flame, Sparkles } from "lucide-react";
+import { Globe, Mail, User, Briefcase, MapPin, Building2, Layers, Flame } from "lucide-react";
+import EnrichmentSection from "@/components/dashboard/EnrichmentSection";
 
 const POT_STYLES = {
   HIGH: "bg-teal-50 text-teal-800 border-teal-200",
@@ -232,11 +233,11 @@ export default function BuyerDossier({ buyerId, onClose, onBuyerChanged }) {
               </section>
 
               <section>
-                <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-zinc-400 mb-3">Enrichment</h3>
-                <div className="rounded-xl border border-dashed border-zinc-300 bg-[#fafafa] p-6 text-sm text-zinc-500 flex items-center gap-3">
-                  <Sparkles className="h-4 w-4 text-teal-600" />
-                  Enrichment &amp; moodboard sections arrive in the next release.
-                </div>
+                <EnrichmentSection
+                  buyer={buyer}
+                  isEditor={isEditor}
+                  onBuyerChanged={(updated) => { setBuyer(updated); onBuyerChanged?.(); }}
+                />
               </section>
             </div>
           </>
