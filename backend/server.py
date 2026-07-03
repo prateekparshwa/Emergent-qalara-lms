@@ -628,6 +628,29 @@ async def _fetch_site_text(url: str) -> str:
     u = url.strip()
     if not u.startswith(("http://", "https://")):
         u = "https://" + u
+
+    tf_key = os.environ.get("TINYFISH_API_KEY", "")
+    # Primary: Tinyfish Fetch (returns markdown)
+    if tf_key:
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as h:
+                r = await h.post(
+                    "https://api.fetch.tinyfish.ai",
+                    headers={"X-API-Key": tf_key, "Content-Type": "application/json"},
+                    json={"urls": [u], "format": "markdown"},
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    results = data.get("results") or []
+                    if results:
+                        md = results[0].get("markdown") or results[0].get("content") or ""
+                        if md:
+                            text = " ".join(md.split())
+                            return text[:8000]
+        except Exception as e:
+            logger.info("tinyfish fetch failed for %s: %s", u, e)
+
+    # Fallback: plain httpx + BeautifulSoup
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=15.0,
                                      headers={"User-Agent": "Mozilla/5.0 QalaraLMS/0.3"}) as h:
@@ -639,11 +662,34 @@ async def _fetch_site_text(url: str) -> str:
             text = " ".join(soup.get_text(separator=" ").split())
             return text[:8000]
     except Exception as e:
-        logger.info("site fetch failed for %s: %s", u, e)
+        logger.info("site fetch fallback failed for %s: %s", u, e)
         return ""
 
 
 async def _web_search_snippets(query: str) -> List[str]:
+    tf_key = os.environ.get("TINYFISH_API_KEY", "")
+    if tf_key:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as h:
+                r = await h.get(
+                    "https://api.search.tinyfish.ai",
+                    params={"query": query, "language": "en"},
+                    headers={"X-API-Key": tf_key},
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    out = []
+                    for item in (data.get("results") or [])[:6]:
+                        t = item.get("title") or ""
+                        s = item.get("snippet") or ""
+                        line = (f"{t} — {s}" if t and s else t or s).strip()
+                        if line:
+                            out.append(line)
+                    return out
+        except Exception as e:
+            logger.info("tinyfish search failed for %s: %s", query, e)
+
+    # Fallback: DuckDuckGo HTML (no key)
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=10.0,
                                      headers={"User-Agent": "Mozilla/5.0"}) as h:
@@ -656,7 +702,7 @@ async def _web_search_snippets(query: str) -> List[str]:
                     snippets.append(t)
             return snippets
     except Exception as e:
-        logger.info("web search failed for %s: %s", query, e)
+        logger.info("web search fallback failed for %s: %s", query, e)
         return []
 
 
