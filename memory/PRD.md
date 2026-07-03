@@ -27,6 +27,14 @@ Build a B2B web app called "Qalara LMS" (Qalara Lead Management System) — an A
 - Sign-in split screen with artisan imagery, dedicated `/signed-out` page.
 - All interactive elements carry `data-testid` per design guidelines.
 
+## What's been implemented — 2026-02-XX (v0.2 Dashboard / Buyer Directory)
+- CSV/XLSX **Import Buyers** flow (editor-only): file upload → preview + auto-column mapping → commit. Dedup by normalized website (fallback org+email); protected fields (`am_notes`, `enrichment`, `moodboard`, `outreach_*`, `account_manager`) preserved on match. Enum normalization for `purchase_potential`; boolean parsing for `sources_from_india`.
+- **Stats band**: Total, HIGH, MEDIUM, Enriched, Assigned. Purchase potential classification uses regex-anchored `^HIGH`/`^MEDIUM` on the field (rationale text never contaminates counts).
+- **Buyer table**: paginated (50/page) with colored purchase potential + outreach status badges; row click opens the dossier.
+- **Typeahead search** (`/api/buyers/suggest`) with prefix match on organization + substring on email/website.
+- **Filters row** (`purchase_potential`, `country`, `business_type`, `account_manager`, `sources_from_india`, `unassigned only`), AND-combined, with glowing colored dot for active filters.
+- **Buyer Dossier drawer**: full read-only field grid, editor-only AM assign dropdown (`PATCH /api/buyers/{id}`), AM notes with author email + timestamp, returned/rendered newest-first (`POST /api/buyers/{id}/notes`).
+
 ## Prioritized Backlog
 
 ### P0 — Next milestone (Discover module)
