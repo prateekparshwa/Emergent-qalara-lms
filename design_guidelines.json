@@ -1,0 +1,126 @@
+{
+  "theme_and_archetype": {
+    "theme": "Light Theme",
+    "archetype": "Archetype 4 (Swiss & High-Contrast) + Archetype 1 (Organic & Earthy)",
+    "description": "A sophisticated, high-contrast B2B SaaS dashboard that blends strict, grid-based utility (Swiss) with tactile, warm accents (Organic) to nod to Qalara's artisan, home decor, and textile domain. Base is crisp white, with strict typographic hierarchy, utilizing teal and amber as functional and emotional focal points."
+  },
+  "colors": {
+    "primary": "#0d9488",
+    "primary_hover": "#0f766e",
+    "secondary": "#f59e0b",
+    "secondary_hover": "#d97706",
+    "background": "#ffffff",
+    "surface": "#fafafa",
+    "surface_hover": "#f4f4f5",
+    "text_main": "#18181b",
+    "text_muted": "#52525b",
+    "border": "#e4e4e7",
+    "border_focus": "#0d9488",
+    "status_demo": "#fef3c7",
+    "status_demo_text": "#b45309",
+    "rules": [
+      "Strictly no purple gradients or generic AI cyan-blue hues.",
+      "Teal (#0d9488) is reserved for primary actions, active states, and focus rings.",
+      "Amber (#f59e0b) is used for secondary accents, warnings, and the 'Viewer' role badge.",
+      "Use #fafafa for the sidebar and card backgrounds to create a subtle separation from the #ffffff main canvas."
+    ]
+  },
+  "typography": {
+    "fonts": {
+      "headings": "Cabinet Grotesk",
+      "body": "Satoshi",
+      "mono": "JetBrains Mono"
+    },
+    "scales": {
+      "h1": "text-4xl sm:text-5xl font-black tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-semibold tracking-tight",
+      "body": "text-base font-medium leading-relaxed",
+      "small": "text-sm font-medium",
+      "tiny_label": "text-xs font-bold uppercase tracking-[0.2em]"
+    },
+    "rules": [
+      "No Inter, Roboto, or standard system fonts.",
+      "Cabinet Grotesk brings a professional but distinctive, slightly heritage/editorial edge suitable for the home decor/artisan domain.",
+      "Satoshi provides ultra-clean legibility for dense dashboard tables.",
+      "Headings must strictly use tight letter spacing (tracking-tight)."
+    ]
+  },
+  "layout_and_spacing": {
+    "grid": "Control Room Grid (Mode B)",
+    "spacing_scale": {
+      "container_padding": "p-6 md:p-8 lg:p-12",
+      "card_padding": "p-6",
+      "gap_tight": "gap-4",
+      "gap_standard": "gap-6",
+      "gap_wide": "gap-12"
+    },
+    "rules": [
+      "Use liberal whitespace (p-8 to p-12) for outer layout wrappers to avoid clutter.",
+      "Dashboard widgets must utilize tight gaps (gap-4 or gap-6) with h-full for alignment.",
+      "Optical alignment over geometrical (e.g., icons in buttons)."
+    ]
+  },
+  "visual_enhancers": {
+    "surfaces": "Neumorphic 'Clay & Crisp' hybrid. Soft drop shadows combined with sharp 1px borders.",
+    "shadows": {
+      "card": "shadow-[0_4px_24px_rgba(0,0,0,0.02)]",
+      "dropdown": "shadow-[0_8px_32px_rgba(0,0,0,0.08)]"
+    },
+    "borders": {
+      "radius": "rounded-xl",
+      "width": "border border-border/60"
+    },
+    "textures": [
+      "Apply a very subtle SVG noise/grain overlay (opacity 1.5%) to the sidebar and auth background to evoke tactility (artisan craft context) without sacrificing SaaS cleanliness."
+    ]
+  },
+  "components_and_states": {
+    "sidebar": {
+      "background": "bg-[#fafafa]",
+      "border": "border-r border-border",
+      "item_active": "bg-teal-50 text-teal-800 font-semibold border-r-2 border-teal-600",
+      "item_inactive": "text-text_muted hover:bg-surface_hover hover:text-text_main",
+      "instructions": "Navigation items must include icons (lucide-react). Logo 'Qalara LMS' at the top in Cabinet Grotesk."
+    },
+    "top_bar": {
+      "background": "bg-white/80 backdrop-blur-md",
+      "border": "border-b border-border/50",
+      "elements": "User avatar, User name, Role badge, Sign-out button. Z-index 50."
+    },
+    "role_badge": {
+      "viewer": "bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold uppercase tracking-widest rounded-full px-3 py-1",
+      "editor": "bg-teal-100 text-teal-800 border border-teal-200 text-xs font-bold uppercase tracking-widest rounded-full px-3 py-1"
+    },
+    "cards": {
+      "style": "bg-white border border-border/60 rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.02)] p-6",
+      "interaction": "hover:-translate-y-0.5 hover:shadow-[0_8px_32px_rgba(0,0,0,0.04)] transition-all duration-200"
+    },
+    "sign_in_screen": {
+      "layout": "Split screen (50/50 on desktop). Left side: Minimalist login form. Right side: Immersive artisan photography.",
+      "form_area": "Flex-col, centered. Qalara Logo, H1 'Welcome to Qalara LMS', Subtitle 'Buyer Intelligence & Outreach', Google Sign-In Button (white with subtle border and shadow, Google G icon).",
+      "image_area": "h-full w-full object-cover. Overlay with bg-teal-900/20 to tone down highlights."
+    },
+    "empty_states": {
+      "coming_soon": "Centered layout in card. Features a muted icon (e.g., 'Hammer' or 'Sparkles' in teal-100), H3 'Coming Soon', and descriptive text body 'We are currently forging this tool. Check back soon.' Uses generous padding (p-16) and border-dashed."
+    },
+    "demo_mode": {
+      "instructions": "If role is viewer, disable primary action buttons (opacity-50, cursor-not-allowed) and wrap in a tooltip stating 'Demo mode — read only'."
+    }
+  },
+  "media_and_imagery": {
+    "image_urls": [
+      {
+        "category": "auth_background",
+        "url": "https://images.unsplash.com/photo-1640292343595-889db1c8262e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwyfHxpbmRpYW4lMjB0ZXh0aWxlcyUyMGNyYWZ0fGVufDB8fHx8MTc4MzEwNTc1NHww&ixlib=rb-4.1.0&q=85",
+        "description": "Indian artisan working on a weaving machine. Used for the right half of the split-screen sign-in page to anchor the B2B tool in its real-world artisanal context."
+      }
+    ],
+    "instructions_to_main_agent": "Use the provided image for the auth screen. Do not use generic placeholders. Ensure the implementation strictly matches the defined UI/UX guidelines and uses Shadcn components stylized with the prescribed typography and colors."
+  },
+  "accessibility_and_testing": {
+    "testing_attributes": "All interactive elements MUST include data-testid attributes (e.g., data-testid='google-signin-btn', data-testid='nav-dashboard', data-testid='sign-out-btn').",
+    "contrast": "Ensure text-muted against surface backgrounds meets 4.5:1 ratio. Hover states must explicitly define text colors.",
+    "motion": "Respect prefers-reduced-motion. Animations limited to 200ms opacity and slight transform shifts."
+  }
+}
