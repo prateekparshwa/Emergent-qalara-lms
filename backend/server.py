@@ -469,6 +469,7 @@ async def list_buyers(
     account_manager: str = "",
     sources_from_india: Optional[str] = None,
     unassigned: bool = False,
+    segment: str = "",
     page: int = 1,
     page_size: int = 50,
     user: User = Depends(get_current_user),
@@ -489,6 +490,8 @@ async def list_buyers(
         query["account_manager"] = account_manager
     if sources_from_india in ("true", "false"):
         query["sources_from_india"] = sources_from_india == "true"
+    if segment in ("directory", "discover"):
+        query["segment"] = segment
     if unassigned:
         ands.append({
             "$or": [
@@ -582,6 +585,57 @@ async def add_buyer_note(buyer_id: str, payload: NotePayload, user: User = Depen
         key=lambda n: n.get("timestamp") or "",
         reverse=True,
     )
+    return doc
+
+
+class DiscoverPayload(BaseModel):
+    input: str
+
+
+@api_router.post("/discover")
+async def discover(payload: DiscoverPayload, user: User = Depends(require_editor)):
+    raw = payload.input.strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Input required")
+
+    website = ""; org_name = raw
+    if "@" in raw and "." in raw.split("@")[-1]:
+        website = "https://" + raw.split("@")[-1].strip()
+        org_name = raw.split("@")[-1].split(".")[0].title()
+    elif raw.startswith(("http://", "https://")) or ("." in raw and " " not in raw):
+        website = raw if raw.startswith(("http://", "https://")) else "https://" + raw
+        from urllib.parse import urlparse
+        org_name = urlparse(website).netloc.replace("www.", "").split(".")[0].title()
+    else:
+        snippets = await _web_search_snippets(f"{raw} official website")
+        for s in snippets:
+            m = re.search(r"https?://[^\s\)\]]+", s)
+            if m:
+                website = m.group(0).rstrip(".,)")
+                break
+
+    now = datetime.now(timezone.utc).isoformat()
+    buyer_id = f"buyer_{uuid.uuid4().hex[:12]}"
+    await db.buyers.insert_one({
+        "id": buyer_id, "organization": org_name, "website": website,
+        "email": raw if "@" in raw else "", "contact_name": "", "designation": "",
+        "country": "", "business_type": "", "org_size": "",
+        "purchase_potential": "UNKNOWN", "potential_rationale": "",
+        "account_manager": "", "am_notes": [], "sources_from_india": False,
+        "segment": "discover", "enrichment": None, "enrichment_updated_at": None,
+        "moodboard": None, "outreach_status": "NONE", "outreach_emails": [],
+        "lead_score": None, "created_at": now, "updated_at": now,
+    })
+    try:
+        await enrich_buyer(buyer_id, force=True, user=user)
+    except Exception as e:
+        logger.warning("discover enrich failed: %s", e)
+    try:
+        await generate_moodboard(buyer_id, force=True, user=user)
+    except Exception as e:
+        logger.warning("discover moodboard failed: %s", e)
+    doc = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    doc["am_notes"] = sorted(doc.get("am_notes") or [], key=lambda n: n.get("timestamp") or "", reverse=True)
     return doc
 
 

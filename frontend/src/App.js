@@ -7,6 +7,7 @@ import SignedOut from "@/pages/SignedOut";
 import AuthCallback from "@/pages/AuthCallback";
 import ComingSoon from "@/pages/ComingSoon";
 import Dashboard from "@/pages/Dashboard";
+import Discover from "@/pages/Discover";
 import { Toaster } from "@/components/ui/sonner";
 
 function Router() {
@@ -25,13 +26,7 @@ function Router() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route
           path="/discover"
-          element={
-            <ComingSoon
-              kicker="Buyer Intelligence"
-              title="Discover"
-              description="Surface, enrich and score global wholesale buyers that fit Qalara's artisan supply."
-            />
-          }
+          element={<Discover />}
         />
         <Route
           path="/outreach"

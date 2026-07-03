@@ -17,6 +17,7 @@ const EMPTY_FILTERS = {
   account_manager: "",
   sources_from_india: "",
   unassigned: false,
+  segment: "",
 };
 
 export default function Dashboard() {
@@ -44,6 +45,7 @@ export default function Dashboard() {
     if (filters.account_manager) p.account_manager = filters.account_manager;
     if (filters.sources_from_india) p.sources_from_india = filters.sources_from_india;
     if (filters.unassigned) p.unassigned = true;
+    if (filters.segment) p.segment = filters.segment;
     return p;
   }, [search, filters, page]);
 

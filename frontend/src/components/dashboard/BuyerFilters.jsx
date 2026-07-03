@@ -45,6 +45,12 @@ export default function BuyerFilters({ filters, onChange }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2.5" data-testid="buyer-filters">
+      <div data-testid="filter-segment" className="flex items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1">
+        {[["","All"],["directory","Directory"],["discover","Discovered"]].map(([v,l]) => (
+          <button key={v||"all"} data-testid={`segment-chip-${v||"all"}`} onClick={() => set("segment", v)}
+            className={`text-xs font-semibold uppercase tracking-wider px-3 py-1.5 rounded-lg transition ${filters.segment===v?"bg-teal-600 text-white":"text-zinc-600 hover:bg-zinc-100"}`}>{l}</button>
+        ))}
+      </div>
       <FilterPill label="Potential" active={!!filters.purchase_potential} testid="filter-potential">
         <Select value={filters.purchase_potential || "__any"} onValueChange={(v) => set("purchase_potential", v === "__any" ? "" : v)}>
           <SelectTrigger className="h-7 border-0 shadow-none px-2 text-sm min-w-[110px]" data-testid="filter-potential-trigger">
