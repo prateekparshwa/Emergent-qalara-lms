@@ -17,8 +17,10 @@ export default function TopBar() {
     .toUpperCase();
 
   const handleSignOut = async () => {
-    await logout();
+    // Navigate BEFORE clearing user; otherwise AppShell will redirect to /sign-in
+    // the moment `user` becomes null, pre-empting our /signed-out navigation.
     navigate("/signed-out", { replace: true });
+    await logout();
   };
 
   const roleClass =

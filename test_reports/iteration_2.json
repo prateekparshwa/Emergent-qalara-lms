@@ -1,0 +1,18 @@
+{
+  "summary": "Regression retest of sign-out flow after fix in TopBar.handleSignOut (navigate to /signed-out BEFORE calling logout()). Bug is resolved: sign-out now lands on /signed-out, session is cleared server-side (401 from /api/auth/me), return-signin-link routes to /sign-in, and unauthenticated /dashboard redirects to /sign-in.",
+  "tested_scope": ["frontend", "auth", "integration"],
+  "passed": [
+    "Editor session cookie seeded via Mongo loads AppShell at /dashboard (topbar visible)",
+    "Pre-signout: GET /api/auth/me from browser context returns 200",
+    "user-menu-trigger -> sign-out-btn navigates to /signed-out (data-testid='signed-out-page' visible, URL=/signed-out)",
+    "Post-signout: GET /api/auth/me from browser context returns 401 (session actually cleared)",
+    "return-signin-link is present on /signed-out",
+    "Clicking return-signin-link navigates to /sign-in (data-testid='signin-page' visible)",
+    "After sign-out, visiting /dashboard directly redirects to /sign-in (auth guard working)"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "not tested (skipped per request)", "frontend": "100% (7/7 sign-out flow checks)"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}
