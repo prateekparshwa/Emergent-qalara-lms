@@ -1,0 +1,17 @@
+{
+  "summary": "Iteration 4 focused retest of the two MEDIUM issues from iteration 3. Both fixes verified: (1) Backend am_notes are now returned newest-first on both POST /api/buyers/{id}/notes and GET /api/buyers/{id}. (2) Frontend viewer role can open buyer dossier and data-testid='dossier-am-readonly' is present and visible in the DOM. Editor smoke flow also re-verified end-to-end: opening dossier, viewing dossier-am-trigger, adding a note via dossier-note-textarea + dossier-note-submit — the new note is confirmed at position 0 (top) of am_notes via API.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "passed": [
+    "Backend: POST /api/buyers/{id}/notes response returns am_notes sorted newest-first (verified with 2 sequential POSTs: 19:43:59 at index 0, 19:43:57 at index 1, older 19:40:33 at index 2)",
+    "Backend: GET /api/buyers/{id} returns am_notes sorted newest-first (identical order as POST response)",
+    "Frontend VIEWER: /dashboard loads; clicking first buyer-row-* opens buyer-dossier; dossier-am-readonly count=1 and visible=True",
+    "Frontend VIEWER: dossier-am-trigger count=0, dossier-note-textarea count=0 (correct role gating)",
+    "Frontend EDITOR: dossier opens; dossier-am-trigger visible; adding a unique note via dossier-note-submit succeeded ('Note added' toast shown, AM NOTES count incremented to 4)",
+    "Integration: newly added editor note (via UI) appears at position 0 of am_notes on GET /api/buyers/{id} (verified via API)"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}

@@ -526,6 +526,12 @@ async def get_buyer(buyer_id: str, user: User = Depends(get_current_user)):
     doc = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Buyer not found")
+    # Return am_notes newest-first
+    doc["am_notes"] = sorted(
+        doc.get("am_notes") or [],
+        key=lambda n: n.get("timestamp") or "",
+        reverse=True,
+    )
     return doc
 
 
@@ -567,7 +573,13 @@ async def add_buyer_note(buyer_id: str, payload: NotePayload, user: User = Depen
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Buyer not found")
-    return await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    doc = await db.buyers.find_one({"id": buyer_id}, {"_id": 0})
+    doc["am_notes"] = sorted(
+        doc.get("am_notes") or [],
+        key=lambda n: n.get("timestamp") or "",
+        reverse=True,
+    )
+    return doc
 
 
 @api_router.get("/settings/qalara_profile")

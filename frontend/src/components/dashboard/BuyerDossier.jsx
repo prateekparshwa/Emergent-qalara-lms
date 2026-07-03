@@ -158,14 +158,16 @@ export default function BuyerDossier({ buyerId, onClose, onBuyerChanged }) {
                       </SelectContent>
                     </Select>
                   ) : (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div data-testid="dossier-am-readonly" className="rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-700 px-3 py-2 text-sm cursor-not-allowed">
-                          {buyer.account_manager || "Unassigned"}
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">Demo mode — read only</TooltipContent>
-                    </Tooltip>
+                    <div data-testid="dossier-am-readonly">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-700 px-3 py-2 text-sm cursor-not-allowed">
+                            {buyer.account_manager || "Unassigned"}
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">Demo mode — read only</TooltipContent>
+                      </Tooltip>
+                    </div>
                   )}
                 </TooltipProvider>
               </section>
